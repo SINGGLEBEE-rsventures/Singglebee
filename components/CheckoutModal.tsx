@@ -560,7 +560,7 @@ const CheckoutModal: React.FC<CheckoutModalProps> = ({ isOpen, onClose, subtotal
                 <p className="text-gray-500 font-bold text-2xl md:text-4xl leading-relaxed">Your Order has been Received! 🍯</p>
                 <div className="bg-brand-light p-10 rounded-[3.5rem] border-4 border-white shadow-inner">
                   <p className="text-brand-black font-black text-lg md:text-xl leading-relaxed italic opacity-80">
-                    Our hive team will contact you shortly through Gmail or Phone to finalize your delivery!
+                    Our hive team will contact you shortly through Email or Phone to finalize your delivery!
                   </p>
                 </div>
               </div>
