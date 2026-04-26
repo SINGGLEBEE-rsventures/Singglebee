@@ -33,8 +33,8 @@ const getApiKey = () => {
     } catch (e) {
         // Ignore
     }
-    // Fallback hardcoded key for Vercel deployment since .env is ignored in git
-    return 'AIzaSyDH9dYe8DYSreOfn1EaiE8V9exuzRCh7AI';
+    // Return null if no key is found to trigger the missing key message in the UI
+    return null;
 };
 
 const getModel = () => {
