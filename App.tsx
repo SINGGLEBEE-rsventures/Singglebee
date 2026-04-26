@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { SpeedInsights } from "@vercel/speed-insights/react";
+import { Analytics } from "@vercel/analytics/react";
 import Navbar from './components/Navbar.tsx';
 import ProductCard, { ProductSkeleton } from './components/ProductCard.tsx';
 import ProductDetails from './components/ProductDetails.tsx';
@@ -441,6 +442,7 @@ const App: React.FC = () => {
       <InteractiveParticles />
       <RoamingBee isCheckoutOpen={isCheckoutOpen} />
       <SpeedInsights />
+      <Analytics />
 
       <Navbar
         cartCount={cartCount}
