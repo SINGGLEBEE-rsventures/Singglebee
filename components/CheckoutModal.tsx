@@ -1,0 +1,579 @@
+
+import React, { useState, useEffect, useRef } from 'react';
+import { CartItem, User } from '../types';
+import BeeCharacter from './BeeCharacter.tsx';
+import { formspreeService } from '../services/formspree';
+
+interface CheckoutModalProps {
+  isOpen: boolean;
+  onClose: () => void;
+  subtotal: number;
+  shippingFee: number;
+  total: number;
+  cart: CartItem[];
+  onSuccess: () => void;
+  user: User | null;
+}
+
+const InputLabel = ({ children, required, icon }: React.PropsWithChildren<{ required?: boolean; icon?: string }>) => (
+  <label className="flex items-center gap-2 text-[11px] font-black text-brand-black/70 uppercase tracking-[0.15em] mb-2.5 ml-1">
+    {icon && <span className="text-lg filter saturate-150">{icon}</span>}
+    <span>{children}</span>
+    {required && <span className="text-brand-rose ml-0.5 text-base">*</span>}
+  </label>
+);
+
+const FormInputContainer = ({ children, focused }: React.PropsWithChildren<{ focused?: boolean }>) => (
+  <div className={`relative transition-all duration-300 group ${focused ? 'scale-[1.01]' : ''}`}>
+    <div className={`absolute -inset-[1px] bg-brand-primary rounded-2xl blur-sm opacity-0 group-hover:opacity-10 transition duration-500 ${focused ? 'opacity-30 blur-md' : ''}`}></div>
+    <div className={`relative bg-brand-light/50 border-2 rounded-2xl transition-all duration-300 ${focused ? 'border-brand-primary bg-white shadow-lg' : 'border-brand-primary/10 group-hover:border-brand-primary/30'}`}>
+      {children}
+    </div>
+  </div>
+);
+
+const CheckoutModal: React.FC<CheckoutModalProps> = ({ isOpen, onClose, subtotal, shippingFee, total, cart, onSuccess, user }) => {
+  const [step, setStep] = useState<'shipping' | 'payment' | 'processing' | 'success'>('shipping');
+  const [formData, setFormData] = useState({
+    name: '',
+    email: '',
+    phone: '',
+    address: '',
+    landmark: '',
+    city: '',
+    state: '',
+    zip: ''
+  });
+  const [focusedField, setFocusedField] = useState<string | null>(null);
+  const [screenshots, setScreenshots] = useState<File[]>([]);
+  const [previews, setPreviews] = useState<string[]>([]);
+  const [copied, setCopied] = useState(false);
+  const [submissionError, setSubmissionError] = useState<string | null>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    if (isOpen) {
+      setStep('shipping');
+      setScreenshots([]);
+      setPreviews([]);
+      setSubmissionError(null);
+      setFormData({
+        name: user?.name || '',
+        email: user?.email || '',
+        phone: user?.phoneNumber || '',
+        address: user?.streetAddress || '',
+        landmark: user?.landmark || '',
+        city: user?.city || '',
+        state: user?.state || '',
+        zip: user?.zipCode || ''
+      });
+    }
+  }, [isOpen, user]);
+
+  const copyUpiId = () => {
+    navigator.clipboard.writeText('singglebee.rsventures@okhdfcbank');
+    setCopied(true);
+    setTimeout(() => setCopied(false), 2000);
+  };
+
+  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = Array.from(e.target.files || []) as File[];
+    const currentTotalSize = screenshots.reduce((acc, file) => acc + file.size, 0);
+    const MAX_TOTAL_SIZE = 9.5 * 1024 * 1024; // 9.5MB to be safe with Formspree's 10MB limit
+
+    const validFiles: File[] = [];
+    let addedSize = 0;
+
+    for (const file of files) {
+      if (currentTotalSize + addedSize + file.size > MAX_TOTAL_SIZE) {
+        alert(`Adding ${file.name} would exceed the 10MB total upload limit. Please upload smaller images.`);
+        continue;
+      }
+      validFiles.push(file);
+      addedSize += file.size;
+    }
+
+    if (validFiles.length > 0) {
+      setScreenshots(prev => [...prev, ...validFiles]);
+      validFiles.forEach((file: File) => {
+        const reader = new FileReader();
+        reader.onloadend = () => setPreviews(prev => [...prev, reader.result as string]);
+        reader.readAsDataURL(file);
+      });
+    }
+
+    // Reset input so same file can be selected again if needed (e.g. after delete)
+    if (fileInputRef.current) fileInputRef.current.value = '';
+  };
+
+  // Validation helpers
+  const isValidEmail = (email: string) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
+  const isValidPhone = (phone: string) => /^[0-9]{10}$/.test(phone);
+  const isValidCityState = (value: string) => /^[a-zA-Z\s]+$/.test(value) && value.trim().length >= 2;
+
+  const validateShippingStep = () => {
+    const missingFields: string[] = [];
+    if (!formData.name.trim()) missingFields.push('Name');
+    if (!formData.email.trim()) missingFields.push('Email');
+    if (!formData.phone.trim()) missingFields.push('Phone');
+    if (!formData.address.trim()) missingFields.push('Address');
+    if (!formData.city.trim()) missingFields.push('City');
+    if (!formData.state.trim()) missingFields.push('State');
+    if (!formData.zip.trim()) missingFields.push('Pin Code');
+
+    if (missingFields.length > 0) {
+      setSubmissionError(`Missing: ${missingFields.join(', ')}`);
+      return false;
+    }
+    if (!isValidEmail(formData.email)) {
+      setSubmissionError('Invalid email address');
+      return false;
+    }
+    if (!isValidPhone(formData.phone)) {
+      setSubmissionError('Phone must be 10 digits');
+      return false;
+    }
+    if (!isValidCityState(formData.city)) {
+      setSubmissionError('City must be text');
+      return false;
+    }
+    if (!isValidCityState(formData.state)) {
+      setSubmissionError('State must be text');
+      return false;
+    }
+    if (!/^[0-9]{6}$/.test(formData.zip)) {
+      setSubmissionError('Pincode must be 6 digits');
+      return false;
+    }
+    setSubmissionError(null);
+    return true;
+  };
+
+  const handleNextStep = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (validateShippingStep()) {
+      setStep('payment');
+      // Scroll to top of modal content
+      const modalContent = document.querySelector('.custom-scrollbar');
+      if (modalContent) modalContent.scrollTop = 0;
+    }
+  };
+
+  const handlePrevStep = () => {
+    setStep('shipping');
+    const modalContent = document.querySelector('.custom-scrollbar');
+    if (modalContent) modalContent.scrollTop = 0;
+  };
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+
+    if (screenshots.length === 0) {
+      alert("Please upload your Payment Receipt (UPI/GPay Screenshot)!");
+      return;
+    }
+
+    setStep('processing');
+    setSubmissionError(null);
+
+    try {
+      const data = new FormData();
+      // Human-readable keys for better email formatting
+      data.append('Customer Name', formData.name);
+      data.append('Contact Email', formData.email);
+      data.append('Phone Number', formData.phone);
+
+      const fullAddress = `${formData.address}, ${formData.landmark ? formData.landmark + ', ' : ''}${formData.city}, ${formData.state}, ${formData.zip}`;
+      data.append('Delivery Address', fullAddress);
+
+      data.append('Order Subtotal', `₹${subtotal.toLocaleString('en-IN')}`);
+      data.append('Shipping Cost', `₹${shippingFee.toLocaleString('en-IN')}`);
+      data.append('Grand Total', `₹${total.toLocaleString('en-IN')}`);
+
+      const orderSummary = (cart || []).map(item => `- ${item.title} (x${item.quantity})`).join('\n');
+      data.append('Order Items', orderSummary);
+
+      // Main message body for the email
+      data.append('message',
+        `🐝 NEW HIVE ORDER 🐝\n\n` +
+        `Customer: ${formData.name}\n` +
+        `Total: ₹${total.toLocaleString('en-IN')}\n\n` +
+        `--- ORDER ITEMS ---\n${orderSummary}\n\n` +
+        `--- DELIVERY ---\n${fullAddress}\n\n` +
+        `--- CONTACT ---\nPhone: ${formData.phone}\nEmail: ${formData.email}\n\n` +
+        `--- PAYMENT PROOF ---\nVerified: Yes (User uploaded screenshot)`
+      );
+
+      data.append('_subject', `🍯 New Hive Order from ${formData.name}`);
+      data.append('Payment Proof', 'Verified (User Uploaded)');
+
+      // NOTE: screenshots are validated but NOT sent to Formspree as per request
+      // This avoids "File Uploads Not Permitted" errors while keeping the UX mandatory.
+
+      await formspreeService.submitOrder(data);
+      
+      setStep('success');
+      onSuccess();
+      setTimeout(() => { onClose(); }, 8000);
+    } catch (err: any) {
+      setSubmissionError(err.message || 'The hive connection was interrupted. Please try again.');
+      setStep('details');
+    }
+  };
+
+  const handleRemoveFile = (index: number, e: React.MouseEvent) => {
+    e.stopPropagation();
+    const newScreenshots = [...screenshots];
+    newScreenshots.splice(index, 1);
+    setScreenshots(newScreenshots);
+
+    const newPreviews = [...previews];
+    newPreviews.splice(index, 1);
+    setPreviews(newPreviews);
+  };
+
+  if (!isOpen) return null;
+
+  return (
+    <div className="fixed inset-0 bg-brand-black/70 backdrop-blur-xl z-[100] flex items-end sm:items-center justify-center p-0 sm:p-2 md:p-6 animate-fade-in overflow-hidden">
+      <div className="bg-white rounded-t-[1.5rem] sm:rounded-[2rem] md:rounded-[4rem] shadow-2xl w-full max-w-6xl overflow-hidden flex flex-col max-h-[95vh] sm:max-h-[96vh] animate-slide-up border-t-4 sm:border-[4px] md:border-[6px] border-brand-accent relative">
+
+        {/* Header Section */}
+        <div className="bg-white px-4 sm:px-6 md:px-14 py-3 sm:py-4 md:py-6 border-b border-brand-light flex items-center justify-between gap-2 sm:gap-4 z-10 shrink-0">
+          <div className="flex items-center gap-2 sm:gap-3 md:gap-5 min-w-0">
+            <div className="w-9 h-9 sm:w-11 sm:h-11 md:w-14 md:h-14 bg-brand-primary rounded-xl sm:rounded-[1.25rem] md:rounded-[1.5rem] flex items-center justify-center text-xl sm:text-2xl md:text-3xl shadow-honey group relative overflow-hidden flex-shrink-0">
+              <div className="absolute inset-0 bg-gradient-to-tr from-white/20 to-transparent pointer-events-none"></div>
+              <span className="group-hover:buzz relative z-10 flex items-center justify-center">
+                <BeeCharacter size="1.5rem" />
+              </span>
+            </div>
+            <div className="min-w-0">
+              <h3 className="text-lg sm:text-2xl md:text-4xl font-black text-brand-black tracking-tighter leading-none truncate">Finalize Order</h3>
+              <p className="text-[8px] sm:text-[9px] md:text-[10px] font-black text-brand-secondary uppercase tracking-[0.2em] sm:tracking-[0.35em] mt-0.5 sm:mt-1.5 opacity-60">Nectar Collection Sequence</p>
+            </div>
+          </div>
+
+          <div className="flex items-center gap-2 sm:gap-4 md:gap-6 flex-shrink-0">
+            <div className="hidden lg:flex flex-col items-end">
+              <span className="text-[9px] font-black text-gray-400 uppercase tracking-widest mb-1.5">Checkout Steps</span>
+              <div className="flex gap-1.5">
+                <div className={`w-8 h-2 rounded-full transition-all duration-700 ${step === 'shipping' ? 'bg-brand-primary shadow-lg scale-x-110' : 'bg-brand-meadow'}`}></div>
+                <div className={`w-8 h-2 rounded-full transition-all duration-700 ${step === 'payment' ? 'bg-brand-primary shadow-lg scale-x-110' : (step === 'processing' || step === 'success') ? 'bg-brand-meadow' : 'bg-brand-light'}`}></div>
+                <div className={`w-8 h-2 rounded-full transition-all duration-700 ${step === 'success' ? 'bg-brand-meadow' : step === 'processing' ? 'bg-brand-primary animate-pulse' : 'bg-brand-light'}`}></div>
+              </div>
+            </div>
+            <button onClick={onClose} className="w-8 h-8 sm:w-10 sm:h-10 md:w-12 md:h-12 rounded-xl sm:rounded-2xl bg-brand-light flex items-center justify-center text-brand-black hover:bg-brand-rose hover:text-white transition-all active:scale-90 font-black shadow-sm text-sm">✕</button>
+          </div>
+        </div>
+
+        <div className="flex-grow overflow-y-auto custom-scrollbar relative z-0">
+          {step === 'shipping' && (
+            <form onSubmit={handleNextStep} className="flex flex-col lg:flex-row h-full">
+              {/* Left Column: Summary */}
+              <div className="w-full lg:w-[40%] bg-brand-light/40 border-b lg:border-b-0 lg:border-r border-brand-light p-4 sm:p-6 md:p-12 space-y-5 sm:space-y-8 md:space-y-10">
+                {submissionError && (
+                  <div className="bg-rose-50 border-2 border-brand-rose/10 p-5 rounded-3xl animate-buzz shadow-sm">
+                    <p className="text-brand-rose font-black text-xs text-center leading-relaxed">🚨 CHECKOUT ERROR: {submissionError}</p>
+                  </div>
+                )}
+
+                {/* Total Card */}
+                <div className="bg-white p-5 sm:p-7 md:p-10 rounded-2xl sm:rounded-[2rem] md:rounded-[3rem] shadow-honey border-2 sm:border-4 border-white relative overflow-hidden group">
+                  <div className="absolute top-0 right-0 w-40 h-40 bg-brand-primary/10 rounded-full blur-3xl -mr-20 -mt-20"></div>
+                  <span className="text-brand-secondary/40 font-black text-[10px] sm:text-[11px] uppercase tracking-[0.3em] sm:tracking-[0.4em] block mb-3 sm:mb-5 text-center">Hive Dues</span>
+                  <div className="flex items-center justify-center gap-1 sm:gap-2">
+                    <span className="text-brand-primary text-xl sm:text-2xl md:text-3xl font-black">₹</span>
+                    <span className="text-4xl sm:text-5xl md:text-7xl font-black text-brand-black tracking-tighter">{total.toLocaleString('en-IN')}</span>
+                  </div>
+
+                  <div className="mt-5 sm:mt-8 md:mt-10 pt-5 sm:pt-8 md:pt-10 border-t-2 border-brand-light grid grid-cols-2 gap-3 sm:gap-6">
+                    <div>
+                      <span className="block text-[9px] sm:text-[10px] font-black text-gray-400 uppercase tracking-widest mb-1">Subtotal</span>
+                      <span className="text-sm sm:text-base md:text-lg font-black text-brand-black">₹{subtotal.toLocaleString('en-IN')}</span>
+                    </div>
+                    <div className="text-right">
+                      <span className="block text-[9px] sm:text-[10px] font-black text-gray-400 uppercase tracking-widest mb-1">Delivery</span>
+                      <span className={`text-sm sm:text-base md:text-lg font-black ${shippingFee === 0 ? 'text-brand-meadow' : 'text-brand-black'}`}>
+                        {shippingFee === 0 ? 'FREE' : `₹${shippingFee.toLocaleString('en-IN')}`}
+                      </span>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="bg-white/60 p-6 rounded-[2rem] border-2 border-brand-primary/10 space-y-4">
+                  <h5 className="font-black text-[10px] text-brand-secondary uppercase tracking-widest">Order Summary</h5>
+                  <div className="space-y-2 max-h-[200px] overflow-y-auto custom-scrollbar pr-2">
+                    {cart.map((item, idx) => (
+                      <div key={idx} className="flex justify-between items-center text-xs">
+                        <span className="font-bold text-gray-600 truncate mr-4">{item.title} x{item.quantity}</span>
+                        <span className="font-black text-brand-black flex-shrink-0">₹{(item.price * item.quantity).toLocaleString('en-IN')}</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+
+                <div className="text-center px-4 opacity-60">
+                  <p className="text-[11px] font-black text-brand-secondary/40 uppercase tracking-[0.3em] italic mb-2">Step 1 of 2</p>
+                  <p className="text-gray-400 font-bold text-[10px] leading-relaxed uppercase tracking-wider">
+                    Provide your delivery information to proceed to payment.
+                  </p>
+                </div>
+              </div>
+
+              {/* Right Column: Details */}
+              <div className="w-full lg:w-[60%] p-4 sm:p-6 md:p-14 space-y-6 sm:space-y-8 md:space-y-12 bg-white">
+                <div className="space-y-8 animate-fade-in">
+                  <div className="flex items-center gap-4 pb-4 border-b border-brand-light">
+                    <div className="flex items-center justify-center w-10 h-10 bg-brand-primary text-brand-black rounded-full font-black shadow-sm">1</div>
+                    <h4 className="font-black text-brand-black uppercase text-sm tracking-[0.4em]">Personal Hive Info</h4>
+                  </div>
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
+                    <div className="space-y-1">
+                      <InputLabel required icon="📝">Your Bee Name</InputLabel>
+                      <FormInputContainer focused={focusedField === 'name'}>
+                        <input required type="text" value={formData.name} onFocus={() => setFocusedField('name')} onBlur={() => setFocusedField(null)} onChange={e => setFormData({ ...formData, name: e.target.value })} className="w-full bg-transparent px-6 py-4.5 text-base font-black text-brand-black outline-none placeholder:text-gray-200" placeholder="Full Name" />
+                      </FormInputContainer>
+                    </div>
+                    <div className="space-y-1">
+                      <InputLabel required icon="✉️">Email Address</InputLabel>
+                      <FormInputContainer focused={focusedField === 'email'}>
+                        <input required type="email" value={formData.email} onFocus={() => setFocusedField('email')} onBlur={() => setFocusedField(null)} onChange={e => setFormData({ ...formData, email: e.target.value })} className="w-full bg-transparent px-6 py-4.5 text-base font-black text-brand-black outline-none placeholder:text-gray-200" placeholder="name@example.com" />
+                      </FormInputContainer>
+                    </div>
+                    <div className="space-y-1 md:col-span-2">
+                      <InputLabel required icon="📞">Contact Number</InputLabel>
+                      <FormInputContainer focused={focusedField === 'phone'}>
+                        <input required type="tel" pattern="[0-9]{10}" value={formData.phone} onFocus={() => setFocusedField('phone')} onBlur={() => setFocusedField(null)} onChange={e => setFormData({ ...formData, phone: e.target.value })} className="w-full bg-transparent px-6 py-4.5 text-base font-black text-brand-black outline-none placeholder:text-gray-200" placeholder="10 Digits" />
+                      </FormInputContainer>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="space-y-8 animate-fade-in" style={{ animationDelay: '0.1s' }}>
+                  <div className="flex items-center gap-4 pb-4 border-b border-brand-light">
+                    <div className="flex items-center justify-center w-10 h-10 bg-brand-primary text-brand-black rounded-full font-black shadow-sm">2</div>
+                    <h4 className="font-black text-brand-black uppercase text-sm tracking-[0.4em]">Delivery Hive</h4>
+                  </div>
+                  <div className="space-y-8">
+                    <div className="space-y-1">
+                      <InputLabel required icon="🏠">Full Address</InputLabel>
+                      <FormInputContainer focused={focusedField === 'address'}>
+                        <input required type="text" value={formData.address} onFocus={() => setFocusedField('address')} onBlur={() => setFocusedField(null)} onChange={e => setFormData({ ...formData, address: e.target.value })} className="w-full bg-transparent px-6 py-4.5 text-base font-black text-brand-black outline-none placeholder:text-gray-200" placeholder="House / Street / Area" />
+                      </FormInputContainer>
+                    </div>
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
+                      <div className="space-y-1">
+                        <InputLabel icon="🏛️">Landmark</InputLabel>
+                        <FormInputContainer focused={focusedField === 'landmark'}>
+                          <input type="text" value={formData.landmark} onFocus={() => setFocusedField('landmark')} onBlur={() => setFocusedField(null)} onChange={e => setFormData({ ...formData, landmark: e.target.value })} className="w-full bg-transparent px-6 py-4.5 text-base font-black text-brand-black outline-none placeholder:text-gray-200" placeholder="Optional" />
+                        </FormInputContainer>
+                      </div>
+                      <div className="space-y-1">
+                        <InputLabel required icon="🏙️">City / Town</InputLabel>
+                        <FormInputContainer focused={focusedField === 'city'}>
+                          <input required type="text" value={formData.city} onFocus={() => setFocusedField('city')} onBlur={() => setFocusedField(null)} onChange={e => setFormData({ ...formData, city: e.target.value })} className="w-full bg-transparent px-6 py-4.5 text-base font-black text-brand-black outline-none placeholder:text-gray-200" placeholder="City" />
+                        </FormInputContainer>
+                      </div>
+                    </div>
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
+                      <div className="space-y-1">
+                        <InputLabel required icon="🗺️">State</InputLabel>
+                        <FormInputContainer focused={focusedField === 'state'}>
+                          <input required type="text" value={formData.state} onFocus={() => setFocusedField('state')} onBlur={() => setFocusedField(null)} onChange={e => setFormData({ ...formData, state: e.target.value })} className="w-full bg-transparent px-6 py-4.5 text-base font-black text-brand-black outline-none placeholder:text-gray-200" placeholder="State" />
+                        </FormInputContainer>
+                      </div>
+                      <div className="space-y-1">
+                        <InputLabel required icon="🔢">Pin Code</InputLabel>
+                        <FormInputContainer focused={focusedField === 'zip'}>
+                          <input required type="text" pattern="[0-9]{6}" maxLength={6} value={formData.zip} onFocus={() => setFocusedField('zip')} onBlur={() => setFocusedField(null)} onChange={e => setFormData({ ...formData, zip: e.target.value })} className="w-full bg-transparent px-6 py-4.5 text-base font-black text-brand-black outline-none placeholder:text-gray-200" placeholder="6 Digits" />
+                        </FormInputContainer>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="pt-6">
+                  <button type="submit" className="group relative w-full bg-brand-black text-brand-primary font-black py-4 sm:py-6 md:py-8 rounded-xl sm:rounded-2xl md:rounded-[2.5rem] shadow-xl hover:scale-[1.03] active:scale-95 transition-all text-base sm:text-xl md:text-3xl flex items-center justify-center gap-3 sm:gap-4 md:gap-6 overflow-hidden">
+                    <div className="absolute inset-0 bg-gradient-to-r from-transparent via-white/5 to-transparent -translate-x-full group-hover:animate-shimmer pointer-events-none"></div>
+                    <div className="flex flex-col items-center">
+                      <span className="text-[7px] sm:text-[8px] md:text-[10px] font-black uppercase tracking-[0.3em] sm:tracking-[0.5em] opacity-40 leading-none mb-1">Proceed to Payment</span>
+                      <span className="leading-none text-sm sm:text-lg md:text-2xl">Next: Payment Method 🍯</span>
+                    </div>
+                  </button>
+                </div>
+              </div>
+            </form>
+          )}
+
+          {step === 'payment' && (
+            <form onSubmit={handleSubmit} className="flex flex-col lg:flex-row h-full animate-slide-right">
+              {/* Left Column: Summary */}
+              <div className="w-full lg:w-[40%] bg-brand-light/40 border-b lg:border-b-0 lg:border-r border-brand-light p-4 sm:p-6 md:p-12 space-y-5 sm:space-y-8 md:space-y-10">
+                {/* Total Card */}
+                <div className="bg-white p-5 sm:p-7 md:p-10 rounded-2xl sm:rounded-[2rem] md:rounded-[3rem] shadow-honey border-2 sm:border-4 border-white relative overflow-hidden group">
+                  <div className="absolute top-0 right-0 w-40 h-40 bg-brand-primary/10 rounded-full blur-3xl -mr-20 -mt-20"></div>
+                  <span className="text-brand-secondary/40 font-black text-[10px] sm:text-[11px] uppercase tracking-[0.3em] sm:tracking-[0.4em] block mb-3 sm:mb-5 text-center">Final Amount</span>
+                  <div className="flex items-center justify-center gap-1 sm:gap-2">
+                    <span className="text-brand-primary text-xl sm:text-2xl md:text-3xl font-black">₹</span>
+                    <span className="text-4xl sm:text-5xl md:text-7xl font-black text-brand-black tracking-tighter">{total.toLocaleString('en-IN')}</span>
+                  </div>
+                </div>
+
+                <div className="bg-white p-6 rounded-3xl border-2 border-brand-primary/10">
+                  <h5 className="font-black text-[10px] text-brand-secondary uppercase tracking-widest mb-4">Delivery to:</h5>
+                  <p className="text-xs font-black text-brand-black mb-1">{formData.name}</p>
+                  <p className="text-[11px] text-gray-500 font-bold leading-relaxed">{formData.address}, {formData.city}, {formData.state} - {formData.zip}</p>
+                  <button type="button" onClick={handlePrevStep} className="mt-4 text-[10px] font-black text-brand-primary uppercase tracking-widest hover:underline">Edit Address</button>
+                </div>
+
+                <div className="text-center px-4">
+                  <p className="text-[11px] font-black text-brand-secondary/40 uppercase tracking-[0.3em] italic mb-2">Step 2 of 2</p>
+                  <p className="text-gray-400 font-bold text-[10px] leading-relaxed uppercase tracking-wider">
+                    Complete your payment and upload the receipt to finalize your order.
+                  </p>
+                </div>
+              </div>
+
+              {/* Right Column: Payment & Upload */}
+              <div className="w-full lg:w-[60%] p-4 sm:p-6 md:p-14 space-y-8 sm:space-y-10 md:space-y-12 bg-white">
+                {/* UPI Payment Card */}
+                <div className="bg-brand-dark p-6 sm:p-8 md:p-10 rounded-3xl sm:rounded-[3rem] shadow-2xl relative overflow-hidden group text-white">
+                  <div className="absolute inset-0 bg-gradient-to-br from-white/5 to-transparent pointer-events-none"></div>
+                  <div className="absolute top-0 right-0 w-32 h-32 bg-brand-primary/20 rounded-full blur-[60px] -mr-16 -mt-16"></div>
+
+                  <div className="flex items-center justify-between mb-8">
+                    <h4 className="font-black text-brand-primary uppercase text-[11px] tracking-[0.4em] flex items-center gap-3">
+                      <span className="animate-buzz inline-block">🍯</span> Step 3: Pay Now
+                    </h4>
+                    <div className="flex gap-2">
+                       <div className="px-3 py-1 bg-white/10 rounded-full text-[8px] font-black uppercase tracking-widest">GPay</div>
+                       <div className="px-3 py-1 bg-white/10 rounded-full text-[8px] font-black uppercase tracking-widest">PhonePe</div>
+                    </div>
+                  </div>
+
+                  <div onClick={copyUpiId} className="bg-white/10 border-2 border-white/10 rounded-2xl md:rounded-3xl p-4 sm:p-6 cursor-pointer hover:bg-white/20 transition-all group/upi shadow-inner">
+                    <div className="flex items-center gap-4 mb-6">
+                      <div className="w-12 h-12 md:w-16 md:h-16 bg-brand-primary rounded-2xl flex items-center justify-center text-2xl md:text-4xl shadow-lg border-2 border-white/20 group-hover/upi:buzz transition-transform flex-shrink-0">
+                        <BeeCharacter size="2.5rem" />
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <span className="block text-[9px] font-black text-brand-primary uppercase tracking-widest mb-1 opacity-70">Official UPI ID</span>
+                        <p className="text-sm sm:text-lg md:text-2xl font-black text-white/90 truncate tracking-tight">
+                          singglebee.rsventures@okhdfcbank
+                        </p>
+                      </div>
+                    </div>
+                    <div className={`w-full py-3 sm:py-4 rounded-2xl text-[10px] md:text-xs font-black uppercase tracking-[0.2em] text-center transition-all ${copied ? 'bg-brand-meadow text-white' : 'bg-brand-primary text-brand-black shadow-lg hover:scale-[1.02]'}`}>
+                      {copied ? '✨ ID Copied! Ready to Pay ✨' : 'Click to Copy UPI ID'}
+                    </div>
+                  </div>
+                  
+                  <div className="mt-8 flex items-start gap-4 p-4 bg-white/5 rounded-2xl border border-white/5">
+                    <span className="text-2xl">💡</span>
+                    <p className="text-[10px] md:text-xs text-white/60 font-bold leading-relaxed">
+                      Please pay <span className="text-brand-primary">₹{total.toLocaleString('en-IN')}</span> and take a screenshot of the successful transaction to upload below.
+                    </p>
+                  </div>
+                </div>
+
+                {/* Upload Proof Area */}
+                <div className="space-y-6">
+                   <div className="flex items-center gap-4 pb-4 border-b border-brand-light">
+                    <div className="flex items-center justify-center w-10 h-10 bg-brand-primary text-brand-black rounded-full font-black shadow-sm">4</div>
+                    <h4 className="font-black text-brand-black uppercase text-sm tracking-[0.4em]">Step 4: Buzz Proof</h4>
+                  </div>
+                  
+                  <div onClick={() => fileInputRef.current?.click()} className="group/upload relative w-full border-4 border-dashed border-brand-primary/10 bg-brand-light/30 rounded-[2rem] p-8 md:p-12 hover:border-brand-primary hover:bg-white hover:shadow-xl cursor-pointer transition-all text-center">
+                    <input type="file" ref={fileInputRef} className="hidden" accept="image/*" multiple onChange={handleFileChange} />
+                    {previews.length > 0 ? (
+                      <div className="flex flex-wrap justify-center gap-5 animate-fade-in">
+                        {previews.map((p, i) => (
+                          <div key={i} className="relative group/thumb">
+                            <img src={p} alt="Proof" className="w-24 h-32 object-cover rounded-xl border-4 border-white shadow-xl transition-transform group-hover/thumb:scale-105" />
+                            <button
+                              onClick={(e) => handleRemoveFile(i, e)}
+                              className="absolute -top-3 -right-3 w-8 h-8 bg-brand-rose text-white rounded-full flex items-center justify-center text-sm font-bold shadow-md hover:scale-110 transition-transform"
+                              type="button"
+                            >
+                              ✕
+                            </button>
+                          </div>
+                        ))}
+                        <div className="w-24 h-32 bg-white border-4 border-dashed border-brand-primary/10 rounded-xl flex items-center justify-center text-brand-secondary text-3xl font-black hover:border-brand-primary transition-colors">+</div>
+                      </div>
+                    ) : (
+                      <div className="flex flex-col items-center">
+                        <div className="w-20 h-20 rounded-3xl bg-white flex items-center justify-center mb-6 text-brand-primary group-hover/upload:buzz transition-all shadow-honey">
+                          <span className="text-5xl">🧾</span>
+                        </div>
+                        <p className="text-2xl text-brand-black font-black tracking-tight">Upload Your Receipt</p>
+                        <p className="text-[10px] text-gray-400 font-bold uppercase tracking-[0.4em] mt-3">Tap to browse files (Max 10MB)</p>
+                      </div>
+                    )}
+                  </div>
+                </div>
+
+                <div className="flex gap-4 pt-6">
+                  <button type="button" onClick={handlePrevStep} className="w-24 md:w-32 bg-brand-light text-brand-black font-black rounded-2xl md:rounded-[2.5rem] hover:bg-gray-200 transition-all flex flex-col items-center justify-center group">
+                    <span className="text-[10px] opacity-40 uppercase tracking-widest mb-1">Back</span>
+                    <span className="text-sm md:text-base">Address</span>
+                  </button>
+                  <button type="submit" className="group relative flex-1 bg-brand-black text-brand-primary font-black py-6 md:py-8 rounded-2xl md:rounded-[2.5rem] shadow-xl hover:scale-[1.02] active:scale-95 transition-all text-xl md:text-3xl flex items-center justify-center gap-4 overflow-hidden">
+                    <div className="absolute inset-0 bg-gradient-to-r from-transparent via-white/5 to-transparent -translate-x-full group-hover:animate-shimmer pointer-events-none"></div>
+                    <span className="group-hover:animate-buzz flex items-center justify-center">
+                      <BeeCharacter size="2.5rem" />
+                    </span>
+                    <div className="flex flex-col items-start">
+                      <span className="text-[10px] font-black uppercase tracking-[0.3em] opacity-40 leading-none mb-2">Final Step</span>
+                      <span className="leading-none text-sm md:text-2xl">Confirm Hive Order</span>
+                    </div>
+                  </button>
+                </div>
+              </div>
+            </form>
+          )}
+
+          {step === 'processing' && (
+            <div className="flex flex-col items-center justify-center py-48 text-center animate-fade-in bg-white">
+              <div className="w-56 h-56 relative mb-14">
+                <div className="absolute inset-0 border-[12px] border-brand-primary/10 rounded-full"></div>
+                <div className="absolute inset-0 border-[12px] border-brand-primary border-t-transparent rounded-full animate-spin"></div>
+                <div className="absolute inset-0 flex items-center justify-center animate-buzz">
+                  <BeeCharacter size="10rem" />
+                </div>
+              </div>
+              <h4 className="text-4xl font-black text-brand-black tracking-tighter">Your Bee is Buzzing...</h4>
+              <p className="text-gray-400 font-bold mt-5 max-w-sm mx-auto leading-relaxed italic">
+                Gathering your order details and transmitting them to the central hive mind.
+              </p>
+            </div>
+          )}
+
+          {step === 'success' && (
+            <div className="flex flex-col items-center justify-center py-28 text-center animate-fade-in h-full bg-white">
+              <div className="w-56 h-56 bg-brand-meadow rounded-[4.5rem] flex items-center justify-center mb-12 shadow-2xl relative group border-[12px] border-white overflow-hidden">
+                <div className="absolute inset-0 bg-gradient-to-tr from-white/20 to-transparent"></div>
+                <svg className="w-28 h-28 text-white relative z-10" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={5} d="M5 13l4 4L19 7" /></svg>
+              </div>
+              <h3 className="text-3xl sm:text-5xl md:text-8xl font-black text-brand-black mb-4 sm:mb-6 md:mb-8 tracking-tighter">Bzz-tastic!</h3>
+              <div className="max-w-2xl px-6 space-y-8">
+                <p className="text-gray-500 font-bold text-2xl md:text-4xl leading-relaxed">Your Order has been Received! 🍯</p>
+                <div className="bg-brand-light p-10 rounded-[3.5rem] border-4 border-white shadow-inner">
+                  <p className="text-brand-black font-black text-lg md:text-xl leading-relaxed italic opacity-80">
+                    Our hive team will contact you shortly through Gmail or Phone to finalize your delivery!
+                  </p>
+                </div>
+              </div>
+              <div className="w-full max-w-md bg-brand-light h-6 rounded-full overflow-hidden mt-16 shadow-inner border-4 border-white">
+                <div className="h-full bg-brand-meadow animate-progress-grow shadow-lg shadow-brand-meadow/30"></div>
+              </div>
+              <p className="text-gray-300 font-black text-[10px] uppercase tracking-[0.5em] mt-8">Hive Connection Secure</p>
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+};
+
+export default CheckoutModal;
