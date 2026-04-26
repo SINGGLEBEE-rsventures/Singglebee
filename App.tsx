@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react';
+import { SpeedInsights } from '@vercel/speed-insights/react';
 import Navbar from './components/Navbar.tsx';
 import ProductCard, { ProductSkeleton } from './components/ProductCard.tsx';
 import ProductDetails from './components/ProductDetails.tsx';
@@ -728,7 +729,7 @@ const App: React.FC = () => {
                   <div className="space-y-6">
                     <div className="flex items-center justify-between">
                       <div className="flex items-center gap-3">
-                        <span className="text-3xl animate-pulse">🏆</span>
+                        <span className="text-3xl animate-pulse">���</span>
                         <h2 className="text-2xl sm:text-3xl font-black text-brand-black tracking-tighter">Best Sellers</h2>
                       </div>
                       <button onClick={() => setSortBy('rating')} className="text-brand-primary font-bold text-sm hover:underline">View All</button>
@@ -842,6 +843,7 @@ const App: React.FC = () => {
       <AuthModal isOpen={isAuthOpen} onClose={() => setIsAuthOpen(false)} onLoginSuccess={handleLoginSuccess} />
       <QuickViewModal product={quickViewProduct} onClose={() => setQuickViewProduct(null)} />
       <Assistant products={products} />
+      <SpeedInsights />
     </div >
   );
 };
